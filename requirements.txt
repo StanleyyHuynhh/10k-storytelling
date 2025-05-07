@@ -5,3 +5,4 @@ gunicorn>=20.0
 python-dotenv>=0.21
 langchain-community
 PyPDF2
+nltk
