@@ -44,7 +44,7 @@ class Job:
             '--pages', str(self.pages)
         ]
 
-                # Launch subprocess
+        # Launch subprocess
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
@@ -56,7 +56,7 @@ class Job:
             env=env
         )
 
-        # Stream logs from subprocess from subprocess
+        # Stream logs from subprocess
         for line in proc.stdout:
             self.log_queue.put(line.strip())
         proc.wait()
@@ -137,5 +137,18 @@ def download(filename):
     return send_file(full_path, as_attachment=False)
 
 if __name__ == '__main__':
+    # Ensure results directory exists
     os.makedirs('results', exist_ok=True)
-    app.run(host='0.0.0.0', port=5000, debug=True, threaded=True)
+
+    # Bind to PORT env var (Render) or default to 5000 locally
+    port = int(os.environ.get('PORT', 5000))
+
+    # Toggle debug via FLASK_DEBUG env var
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+
+    app.run(
+        host='0.0.0.0',
+        port=port,
+        debug=debug,
+        threaded=True
+    )
