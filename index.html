@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>10-K PDF Uploader & Analyzer</title>
+  <style>
+    body { font-family: sans-serif; max-width: 800px; margin: 2rem auto; }
+    label, input, button { font-size: 1rem; }
+    input, button { padding: 0.5rem; }
+    #status, #logs { margin-top: 1rem; }
+    #logs { height: 150px; overflow: auto; border: 1px solid #ccc; padding: 0.5rem; background: #f9f9f9; white-space: pre-wrap; }
+    .tabs { margin-top: 2rem; }
+    .tab-buttons button { margin-right: 5px; padding: 5px 10px; }
+    .tab { display: none; margin-top: 1rem; }
+    #narrative-content { white-space: pre-wrap; border: 1px solid #ddd; padding: 1rem; background: #fafafa; height: 400px; overflow: auto; }
+    #sankey-content { width: 100%; height: 400px; border: 1px solid #ddd; }
+  </style>
+</head>
+<body>
+  <h1>Upload 10-K PDF & Analyze</h1>
+  <form id="upload-form" enctype="multipart/form-data">
+    <label for="pdf-file">Select 10-K PDF:</label>
+    <input type="file" id="pdf-file" accept="application/pdf" required />
+    <label for="pages" style="margin-left:1rem;">Pages:</label>
+    <input type="number" id="pages" value="3" style="width:4rem" />
+    <button type="submit">Upload & Process</button>
+  </form>
+
+  <div id="status"></div>
+  <div id="logs"></div>
+
+  <div class="tabs">
+    <div class="tab-buttons">
+      <button onclick="showTab('narrative')">Narrative</button>
+      <button onclick="showTab('sankey')">Sankey Chart</button>
+    </div>
+    <div id="narrative" class="tab">
+      <h2>Narrative</h2>
+      <div id="narrative-content">No narrative loaded.</div>
+    </div>
+    <div id="sankey" class="tab">
+      <h2>Sankey Chart</h2>
+      <iframe id="sankey-content"></iframe>
+    </div>
+  </div>
+
+  <script>
+    const apiRoot = '';
+    let logSource;
+
+    document.getElementById('upload-form').addEventListener('submit', e => {
+      e.preventDefault();
+      const fileInput = document.getElementById('pdf-file');
+      const pages = parseInt(document.getElementById('pages').value, 10) || 3;
+      if (!fileInput.files.length) return alert('Please select a PDF file');
+
+      document.getElementById('status').textContent = 'Uploading…';
+      document.getElementById('logs').textContent = '';
+      hideTabs();
+
+      const formData = new FormData();
+      formData.append('file', fileInput.files[0]);
+      formData.append('pages', pages);
+
+      fetch(`${apiRoot}/api/upload_pdf`, {
+        method: 'POST',
+        body: formData
+      })
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) throw new Error(data.error);
+        openLogStream(data.job_id);
+        pollStatus(data.job_id);
+      })
+      .catch(err => {
+        document.getElementById('status').textContent = 'Error: ' + err.message;
+      });
+    });
+
+    function openLogStream(jobId) {
+      if (logSource) logSource.close();
+      logSource = new EventSource(`${apiRoot}/api/logs/${jobId}`);
+      logSource.onmessage = e => {
+        const logs = document.getElementById('logs');
+        const clean = e.data.replace(/[\*_#>`~]/g, '').trim();
+        logs.textContent += clean + '\n';
+        logs.scrollTop = logs.scrollHeight;
+      };
+    }
+
+    function pollStatus(jobId) {
+      fetch(`${apiRoot}/api/status/${jobId}`)
+        .then(r => r.json())
+        .then(data => {
+          document.getElementById('status').textContent = 'Status: ' + data.status;
+          if (data.status === 'running') {
+            setTimeout(() => pollStatus(jobId), 2000);
+          } else if (data.status === 'completed') {
+            showResults(jobId);
+            showTab('narrative');
+          }
+        })
+        .catch(err => {
+          document.getElementById('status').textContent = 'Status error: ' + err.message;
+        });
+    }
+
+    function showResults(jobId) {
+      fetch(`${apiRoot}/api/results/${jobId}`)
+        .then(r => r.json())
+        .then(data => {
+          if (data.error) {
+            document.getElementById('status').textContent = data.error;
+            return;
+          }
+
+          const narrativeFile = data.narrative;
+          const sankeyFile   = data.sankey;
+          const narrativeDiv = document.getElementById('narrative-content');
+          const sankeyIframe = document.getElementById('sankey-content');
+
+          narrativeDiv.textContent = 'Loading narrative…';
+          fetch(`${apiRoot}/api/download/${encodeURIComponent(narrativeFile)}`)
+            .then(res => res.text())
+            .then(text => { narrativeDiv.textContent = text; })
+            .catch(err => {
+              narrativeDiv.innerHTML = `
+                <p style="color:red">Failed to load narrative: ${err.message}</p>
+                <p><a href="${apiRoot}/api/download/${encodeURIComponent(narrativeFile)}" target="_blank">Download narrative</a></p>
+              `;
+            });
+
+          sankeyIframe.src = `${apiRoot}/api/download/${encodeURIComponent(sankeyFile)}`;
+          sankeyIframe.onerror = () => {
+            document.getElementById('sankey').innerHTML += `
+              <p style="color:red">Failed to load Sankey chart.</p>
+              <p><a href="${apiRoot}/api/download/${encodeURIComponent(sankeyFile)}" target="_blank">Download Sankey HTML</a></p>
+            `;
+          };
+        })
+        .catch(err => {
+          document.getElementById('status').textContent = 'Results error: ' + err.message;
+        });
+    }
+
+    function showTab(name) {
+      document.querySelectorAll('.tab').forEach(div => div.style.display = 'none');
+      document.getElementById(name).style.display = 'block';
+    }
+
+    function hideTabs() {
+      document.querySelectorAll('.tab').forEach(div => div.style.display = 'none');
+    }
+  </script>
+</body>
+</html>
